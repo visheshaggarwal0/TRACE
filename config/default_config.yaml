@@ -1,0 +1,62 @@
+# TRACE Configuration File
+
+project:
+  name: "TRACE"
+  description: "Topological Road Augmentation and Completion Engine"
+  version: "0.1.0"
+  seed: 42
+
+paths:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  simulated_dir: "data/simulated"
+  output_dir: "data/outputs"
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+
+dataset:
+  tile_size: 512
+  overlap: 64
+  buffer_road_width_pixels: 4
+  gaussian_blur_sigma: 1.5
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+
+simulation:
+  degradation_strategy: "random_drop" # Options: random_drop, suburban_ring, disaster_bbox
+  drop_ratio: 0.30                     # 30% of roads removed to simulate incomplete basemap
+  suburban_radius_fraction: 0.65       # For suburban ring simulation
+
+model:
+  architecture: "dlinknet34"           # Options: dlinknet34, unet_resnet34
+  in_channels: 4                       # Channels: [Red, Green, Blue, Prior_Map]
+  out_channels: 1                      # Probability heatmap of missing/residual centerlines
+  pretrained: true
+
+training:
+  batch_size: 8
+  learning_rate: 0.0002
+  weight_decay: 0.0001
+  epochs: 60
+  scheduler: "cosine"
+  early_stopping_patience: 12
+  num_workers: 4
+  device: "cuda"                       # Will automatically fallback to cpu if cuda unavailable
+
+loss:
+  lambda_bce: 1.0
+  lambda_dice: 1.0
+  lambda_cldice: 1.5                   # High weight on centerline connectivity
+  cldice_iters: 10                     # Number of min/max iterations for soft-skeleton
+
+vectorization:
+  probability_threshold: 0.50
+  spur_prune_length_meters: 15.0       # Remove dead-end whiskers shorter than this
+  junction_merge_radius_meters: 10.0   # Collapse multi-node clusters into one centroid
+  snapping_search_radius_meters: 30.0  # Max distance to search for master road connection
+  snapping_angle_tolerance_deg: 35.0   # Max angle deviation for directional ray-casting
+
+evaluation:
+  apls_sample_pairs: 250
+  apls_buffer_meters: 8.0              # Spatial buffer tolerance for snapping to ground truth
