@@ -6,6 +6,9 @@ from affine import Affine
 
 from src.models.losses import SoftSkeletonize, soft_cldice_loss, TRACECompositeLoss
 from src.models.dlinknet import DLinkNet34
+from src.models.unet import UNet4Channel
+from src.models.deeplabv3plus import DeepLabV3Plus
+from src.models.factory import build_model
 from src.vectorization.skeletonizer import extract_skeleton_graph
 from src.vectorization.graph_contraction import contract_graph, prune_short_spurs
 from src.vectorization.snapping_engine import snap_subgraph_to_master
@@ -39,13 +42,50 @@ def test_dlinknet_4channel():
     assert output.shape == (1, 1, 128, 128)
 
 
+def test_unet_4channel():
+    """Verify standard U-Net forward pass with 4-channel input."""
+    model = UNet4Channel(in_channels=4, out_channels=1, base_features=16)
+    dummy_tensor = torch.randn(1, 4, 128, 128)
+    output = model(dummy_tensor)
+    assert output.shape == (1, 1, 128, 128)
+
+
+def test_deeplabv3plus_4channel():
+    """Verify DeepLabv3+ forward pass with 4-channel input and ASPP."""
+    model = DeepLabV3Plus(in_channels=4, out_channels=1, pretrained=False)
+    dummy_tensor = torch.randn(1, 4, 128, 128)
+    output = model(dummy_tensor)
+    assert output.shape == (1, 1, 128, 128)
+
+
+def test_apg_dlinknet_4channel():
+    """Verify Adaptive Prior Gated D-LinkNet forward pass and gating map."""
+    model = build_model("apg_dlinknet", in_channels=4, out_channels=1, pretrained=False)
+    dummy_tensor = torch.randn(1, 4, 128, 128)
+    output = model(dummy_tensor)
+    assert output.shape == (1, 1, 128, 128)
+    assert model.last_gate_map is not None
+    assert model.last_gate_map.shape == (1, 1, 32, 32)
+    assert model.last_gate_map.min() >= 0.0
+    assert model.last_gate_map.max() <= 1.0
+
+
+def test_model_factory():
+    """Verify model factory instantiates all supported models correctly."""
+    for m_name in ["dlinknet34", "unet", "deeplabv3plus", "apg_dlinknet"]:
+        model = build_model(m_name, in_channels=4, out_channels=1, pretrained=False)
+        dummy_tensor = torch.randn(1, 4, 64, 64)
+        out = model(dummy_tensor)
+        assert out.shape == (1, 1, 64, 64)
+
+
 def test_vectorization_and_contraction():
     """Verify raster skeletonization and degree-2 graph contraction."""
     # Create a 64x64 binary image with a horizontal line
     prob_map = np.zeros((64, 64), dtype=np.float32)
     prob_map[30:33, 10:50] = 0.9  # Line of length 40 pixels
 
-    transform = Affine.translation(100.0, 200.0) * Affine.scale(1.0, -1.0)
+    transform = Affine.translation(100.0, 200.0) @ Affine.scale(1.0, -1.0)
     raw_graph, skeleton = extract_skeleton_graph(prob_map, transform, prob_threshold=0.5)
 
     assert len(raw_graph.nodes) > 0

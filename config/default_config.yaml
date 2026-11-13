@@ -29,7 +29,7 @@ simulation:
   suburban_radius_fraction: 0.65       # For suburban ring simulation
 
 model:
-  architecture: "dlinknet34"           # Options: dlinknet34, unet_resnet34
+  architecture: "dlinknet34"           # Options: dlinknet34, unet, deeplabv3plus
   in_channels: 4                       # Channels: [Red, Green, Blue, Prior_Map]
   out_channels: 1                      # Probability heatmap of missing/residual centerlines
   pretrained: true

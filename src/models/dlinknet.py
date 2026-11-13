@@ -25,19 +25,24 @@ class DilatedConvBlock(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    """Upsampling decoder block with skip-connection fusion."""
+    """Upsampling decoder block with bilinear upsampling (Checkerboard-Free)."""
 
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
-        self.deconv = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.up = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+        )
         self.conv = nn.Sequential(
-            nn.Conv2d(out_channels * 2, out_channels, kernel_size=3, padding=1),
+            nn.Conv2d(out_channels * 2, out_channels, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True),
         )
 
     def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
-        x = self.deconv(x)
+        x = self.up(x)
         x = torch.cat([x, skip], dim=1)
         return self.conv(x)
 
@@ -90,14 +95,21 @@ class DLinkNet34(nn.Module):
         self.decoder3 = DecoderBlock(256, 128)
         self.decoder2 = DecoderBlock(128, 64)
         self.decoder1 = nn.Sequential(
-            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            nn.Conv2d(64, 32, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+        )
+        self.decoder0 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            nn.Conv2d(32, 16, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(16),
             nn.ReLU(inplace=True),
         )
 
         # Final head
         self.final = nn.Sequential(
-            nn.Conv2d(32, 16, kernel_size=3, padding=1),
+            nn.Conv2d(16, 16, kernel_size=3, padding=1),
             nn.BatchNorm2d(16),
             nn.ReLU(inplace=True),
             nn.Conv2d(16, out_channels, kernel_size=1),
@@ -122,6 +134,7 @@ class DLinkNet34(nn.Module):
         d3 = self.decoder3(d4, e2)
         d2 = self.decoder2(d3, e1)
         d1 = self.decoder1(d2)
+        d0 = self.decoder0(d1)
 
-        out = self.final(d1)
+        out = self.final(d0)
         return out

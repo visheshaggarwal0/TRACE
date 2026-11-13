@@ -1,0 +1,3 @@
+Architecture,Pixel IoU,APLS Routing Score,Connectivity Gain
+DLinkNet34,0.4102,0.5687,+6.9%
+APG-DLinkNet34 (Ours),0.2446,0.5412,+4.1%

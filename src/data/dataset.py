@@ -102,7 +102,7 @@ class TRACEDataset(Dataset):
 
         metadata = {
             "image_path": img_path,
-            "affine_transform": affine_transform,
+            "affine_transform": list(affine_transform)[:6],
             "crs": str(crs),
             "original_shape": (height, width),
         }

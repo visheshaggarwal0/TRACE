@@ -29,13 +29,13 @@ def geo_to_pixel(x_geo: float, y_geo: float, transform: Affine) -> Tuple[float, 
     Uses the inverse affine transformation of the raster image.
     """
     inv_transform = ~transform
-    col, row = inv_transform * (x_geo, y_geo)
+    col, row = inv_transform @ (x_geo, y_geo)
     return col, row
 
 
 def pixel_to_geo(col: float, row: float, transform: Affine) -> Tuple[float, float]:
     """Converts image pixel coordinates (col, row) to geographic/projected map coordinates (X, Y)."""
-    x_geo, y_geo = transform * (col, row)
+    x_geo, y_geo = transform @ (col, row)
     return x_geo, y_geo
 
 

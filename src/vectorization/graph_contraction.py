@@ -41,7 +41,10 @@ def prune_short_spurs(graph: nx.Graph, min_length_meters: float = 15.0) -> nx.Gr
         for node in degree_1_nodes:
             if node not in pruned:
                 continue
-            neighbor = list(pruned.neighbors(node))[0]
+            neighbors = list(pruned.neighbors(node))
+            if not neighbors:
+                continue
+            neighbor = neighbors[0]
             edge_weight = pruned[node][neighbor].get("weight", 0.0)
             if edge_weight < min_length_meters:
                 pruned.remove_node(node)

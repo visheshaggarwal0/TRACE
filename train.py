@@ -7,13 +7,14 @@ from tqdm import tqdm
 
 from src.common.logger import setup_logger
 from src.data.dataset import TRACEDataset
-from src.models.dlinknet import DLinkNet34
+from src.models import build_model
 from src.models.losses import TRACECompositeLoss
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train TRACE Road Extraction Model")
     parser.add_argument("--config", type=str, default="config/default_config.yaml", help="Path to config YAML")
+    parser.add_argument("--model", type=str, default=None, help="Model architecture: 'dlinknet34', 'unet', 'deeplabv3plus', 'apg_dlinknet'")
     parser.add_argument("--epochs", type=int, default=None, help="Override number of training epochs")
     parser.add_argument("--batch_size", type=int, default=None, help="Override batch size")
     parser.add_argument("--lr", type=float, default=None, help="Override learning rate")
@@ -27,7 +28,6 @@ def main():
     with open(args.config, "r") as f:
         cfg = yaml.safe_load(f)
 
-    # Overrides
     epochs = args.epochs or cfg["training"]["epochs"]
     batch_size = args.batch_size or cfg["training"]["batch_size"]
     lr = args.lr or cfg["training"]["learning_rate"]
@@ -39,8 +39,51 @@ def main():
     os.makedirs(cfg["paths"]["checkpoint_dir"], exist_ok=True)
     os.makedirs(cfg["paths"]["log_dir"], exist_ok=True)
 
-    # Model and Loss setup
-    model = DLinkNet34(
+    # 1. Gather dataset files
+    raw_images = sorted([
+        os.path.join(cfg["paths"]["raw_dir"], f)
+        for f in os.listdir(cfg["paths"]["raw_dir"])
+        if f.endswith((".tif", ".tiff"))
+    ]) if os.path.exists(cfg["paths"]["raw_dir"]) else []
+
+    geojson_files = sorted([
+        os.path.join(cfg["paths"]["raw_dir"], f)
+        for f in os.listdir(cfg["paths"]["raw_dir"])
+        if f.endswith(".geojson")
+    ]) if os.path.exists(cfg["paths"]["raw_dir"]) else []
+
+    if not raw_images or len(raw_images) != len(geojson_files):
+        logger.warning(
+            f"Found {len(raw_images)} images and {len(geojson_files)} GeoJSONs. "
+            "Please run: python scripts/generate_synthetic_sample.py to generate sample pairs, "
+            "or populate data/raw/ with SpaceNet 3 data."
+        )
+        return
+
+    logger.info(f"Loaded {len(raw_images)} satellite image and vector road pairs.")
+
+    # 2. Build Dataset & DataLoader
+    dataset = TRACEDataset(
+        image_paths=raw_images,
+        geojson_paths=geojson_files,
+        degradation_strategy=cfg["simulation"]["degradation_strategy"],
+        drop_ratio=cfg["simulation"]["drop_ratio"],
+        buffer_width_pixels=cfg["dataset"]["buffer_road_width_pixels"],
+        gaussian_sigma=cfg["dataset"]["gaussian_blur_sigma"],
+    )
+
+    loader = DataLoader(
+        dataset,
+        batch_size=min(batch_size, len(dataset)),
+        shuffle=True,
+        num_workers=0,  # 0 workers for maximum Windows compatibility
+    )
+
+    # 3. Model and Loss setup
+    model_name = args.model or cfg["model"].get("architecture", "dlinknet34")
+    logger.info(f"Building perception model: {model_name.upper()}")
+    model = build_model(
+        model_name=model_name,
         in_channels=cfg["model"]["in_channels"],
         out_channels=cfg["model"]["out_channels"],
         pretrained=cfg["model"]["pretrained"],
@@ -55,23 +98,44 @@ def main():
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=cfg["training"]["weight_decay"])
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    use_cuda = device.type == "cuda"
+    scaler = torch.amp.GradScaler("cuda", enabled=use_cuda)
 
-    # Synthetic demo verification check if raw data isn't downloaded yet
-    raw_images = [
-        os.path.join(cfg["paths"]["raw_dir"], f)
-        for f in os.listdir(cfg["paths"]["raw_dir"])
-        if f.endswith((".tif", ".tiff"))
-    ] if os.path.exists(cfg["paths"]["raw_dir"]) else []
+    # 4. Training Loop
+    best_loss = float("inf")
+    checkpoint_path = os.path.join(cfg["paths"]["checkpoint_dir"], f"best_model_{model_name}.pth")
+    default_checkpoint_path = os.path.join(cfg["paths"]["checkpoint_dir"], "best_model.pth")
 
-    if not raw_images:
-        logger.warning(
-            "No satellite GeoTIFF images found in data/raw/. "
-            "Please download the SpaceNet 3 dataset into data/raw/ to start full training. "
-            "To test the architecture components, run: python -m pytest tests/"
-        )
-        return
+    for epoch in range(1, epochs + 1):
+        model.train()
+        epoch_loss = 0.0
 
-    logger.info(f"Loaded {len(raw_images)} training tiles.")
+        for inputs, targets, _ in tqdm(loader, desc=f"Epoch {epoch}/{epochs}"):
+            inputs = inputs.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
+
+            optimizer.zero_grad(set_to_none=True)
+            with torch.amp.autocast("cuda", enabled=use_cuda):
+                logits = model(inputs)
+                loss = criterion(logits, targets)
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
+            epoch_loss += loss.item()
+
+        scheduler.step()
+        avg_loss = epoch_loss / len(loader)
+        logger.info(f"Epoch [{epoch}/{epochs}] - Loss: {avg_loss:.4f} - LR: {scheduler.get_last_lr()[0]:.6f}")
+
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save(model.state_dict(), checkpoint_path)
+            torch.save(model.state_dict(), default_checkpoint_path)
+            logger.info(f"Saved best model checkpoint to {checkpoint_path} (Loss: {best_loss:.4f})")
+
+    logger.info("Training complete.")
 
 
 if __name__ == "__main__":
